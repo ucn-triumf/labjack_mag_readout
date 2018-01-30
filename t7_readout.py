@@ -13,11 +13,12 @@ import logging
 import sys
 from datetime import datetime
 
-MAX_REQUESTS = 50 # The number of eStreamRead calls that will be performed.
-
+MAX_REQUESTS = 5 # The number of eStreamRead calls that will be performed.
+print "Here.. " 
 # Open first found T7 LabJack
-# handle = ljm.openS("T7", "USB", "ANY")
-handle = ljm.openS("T7", "USB", "ANY")
+#handle = ljm.openS("T7", "USB", "ANY")
+handle = ljm.openS("T7", "ETHERNET", "142.90.151.7")
+print "He.. " 
 
 info = ljm.getHandleInfo(handle)
 print("Opened a LabJack with Device type: %i, Connection type: %i,\n" \
