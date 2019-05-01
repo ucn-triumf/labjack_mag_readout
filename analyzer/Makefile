@@ -59,9 +59,9 @@ endif # MIDASSYS
 
 OBJS:=
 
-all: $(OBJS) ana.exe 
+all: $(OBJS) anaMag.exe 
 
-ana.exe: ana.cxx $(OBJS) 
+anaMag.exe: ana.cxx $(OBJS) 
 	$(CXX) -o $@ $(CXXFLAGS) $^ $(LIBS) $(ROOTGLIBS) -lm -lz -lpthread -lssl -lutil
 
 %.o: %.cxx

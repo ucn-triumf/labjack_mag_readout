@@ -8,7 +8,7 @@
 #include <time.h>
 
 #include "TRootanaEventLoop.hxx"
-#include "TAnaManager.hxx"
+//#include "TAnaManager.hxx"
 #include <iostream>
 #include <fstream>
 
@@ -29,7 +29,7 @@ public:
   virtual ~Analyzer() {};
 
   void Initialize(){
-    myfile.open ("run01208.txt");
+    myfile.open ("run01242.txt");
   }
 
   void InitManager(){
@@ -59,7 +59,10 @@ public:
     int timestamp = dataContainer.GetMidasData().GetTimeStamp();
     
     myfile << timestamp;
-    for(int i = 0; i < 15; i++){
+    int channels = 15;
+    int reads_per_sec = 30;   // Hz
+    //for(int i = 0; i < 7; i++){   // For 3 channels every 1 second
+    for(int i = 0; i < (1+reads_per_sec*channels*2); i++){   //1 time value, 2 values per channel (val and std), 3 channels, 20 values per second
       double data2 =  data->GetDouble()[i];
       myfile << ", " << data2;
     }
