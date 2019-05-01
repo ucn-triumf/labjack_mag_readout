@@ -484,7 +484,18 @@ INT read_labjack_event(char *pevent, INT iter)
     // POLL LABJACK SAMPLES_PER_AVG TIMES
     for(i=0; i<SAMPLES_PER_AVG; i++) {
       err = LJM_eStreamRead(handle, streamData, &deviceScanBacklog, &LJMScanBacklog);
-      ErrorCheck(err, "LJM_eStreamRead");
+      if(err == 1221){ // ignore errors of type 1221
+
+	cm_msg(MINFO,"read_labjack_event","Gotten labjack error with error number = 1221");
+
+	static int error_count = 0;
+	error_count++;
+	if(error_count > 100) ErrorCheck(err, "LJM_eStreamRead too many errors");
+	
+	  
+      }else{
+	ErrorCheck(err, "LJM_eStreamRead Cann I add extra info???");
+      }
 
       for (channel = 0; channel < NUM_CHANNELS; channel++) {
         subData[SAMPLES_PER_AVG*channel + i] = streamData[channel];
