@@ -1,8 +1,13 @@
 /********************************************************************\
  Labjack readout frontend
  Thomas Lindner (TRIUMF)
-\********************************************************************/
 
+Useful LabJack nomenclature 
+ Address => The Modbus address of one channel.
+ Sample => A reading from one address.
+ Scan => One reading from all addresses in the scan list.
+ SampleRate = NumAddresses * ScanRate
+\********************************************************************/
 
 #include <vector>
 #include <stdio.h>
@@ -73,6 +78,7 @@ const char *CHANNEL_NAMES[] = {
 
 
 // For Fluxgate Input Orientation (x, y, z) in order: 2, 3, 6, 7, 10
+// These channel names are assigned to LabJack addresses in frontend_init()
 const char *CHANNEL_NAMES[] = {
 	"AIN72", "AIN74", "AIN76", 
 	"AIN79", "AIN81", "AIN83",
@@ -90,12 +96,12 @@ const char *CHANNEL_NAMES[] = {
 // 5      2            0
 
 
-enum { NUM_CHANNELS = sizeof(CHANNEL_NAMES) / sizeof(CHANNEL_NAMES[0]) };
+enum { NumAddresses = sizeof(CHANNEL_NAMES) / sizeof(CHANNEL_NAMES[0]) };
 
 
-/* double INIT_SCAN_RATE = 100000/NUM_CHANNELS*0.9;
+/* double INIT_SCAN_RATE = 100000/NumAddresses*0.9;
 
-INT SCANS_PER_READ = INIT_SCAN_RATE/NUM_CHANNELS;
+INT ScansPerRead = INIT_SCAN_RATE/NumAddresses;
 
 */  
 
@@ -108,28 +114,28 @@ double INIT_SCAN_RATE = 1500; // Edited by Stewart - was 2000 originally
 
 // How many scans to get per call to LJMeStreamRead. INIT_SCAN_RATE/2 is
 // recommended
-//int SCANS_PER_READ = INIT_SCAN_RATE/10; // Edited by Stewart - was INIT_SCAN_RATE / 2 initially
+//int ScansPerRead = INIT_SCAN_RATE/10; // Edited by Stewart - was INIT_SCAN_RATE / 2 initially
 
 
 // Cliffs comments on SAMPLES_PER_AVG: Cliff defined variable. Dictactes how many samples from a channel is taken before a mean and std calculation is made and then passed to MIDAS.
 int SAMPLES_PER_AVG = 10;
 int DP_PER_MEVENT = 1;   // Data points per MIDAS event for each channel each second (Hz)
 
-// Cliff's comments on SCANS_PER_READ: Labjack defined variable. Dictates how many times labjack will sample a channel before the channel value is reported when read.
-int SCANS_PER_READ = (INIT_SCAN_RATE / (SAMPLES_PER_AVG*DP_PER_MEVENT)) + 1;  // plus 1 to ensure labjack buffer empties faster than it fills
+// Cliff's comments on ScansPerRead: Labjack defined variable. Dictates how many times labjack will sample a channel before the channel value is reported when read.
+int ScansPerRead = (INIT_SCAN_RATE / (SAMPLES_PER_AVG*DP_PER_MEVENT)) + 1;  // plus 1 to ensure labjack buffer empties faster than it fills
 
 // Cliff comment's example sampling frequencies:
 // 1 Hz:
 // DP_PER_MEVENT = 1
 // SAMPLES_PER_AVG = 10
 // INIT_SCAN_RATE = 1500 (labjack samples channel each of the 15 channels 100 times per read)
-// SCANS_PER_READ (calculated) = 150
+// ScansPerRead (calculated) = 150
 
 
 /*
-// Channels/Addresses to stream. NUM_CHANNELS can be less than or equal to
+// Channels/Addresses to stream. NumAddresses can be less than or equal to
 // the size of CHANNEL_NAMES
-enum { NUM_CHANNELS = 2 };
+enum { NumAddresses = 2 };
 const char * CHANNEL_NAMES[] = {"AIN0", "AIN1"};
 */
 INT err, iteration, channel;
@@ -138,13 +144,13 @@ INT err, iteration, channel;
   //INT deviceScanBacklog = 0;
   //INT LJMScanBacklog = 0; 
 
-INT * aScanList = (INT *) malloc(sizeof(int) * NUM_CHANNELS);
+INT * aScanList = (INT *) malloc(sizeof(int) * NumAddresses);
 
-//INT aDataSize = NUM_CHANNELS * SCANS_PER_READ;
+//INT aDataSize = NumAddresses * ScansPerRead;
 //double * aData = (double *) malloc(sizeof(double) * aDataSize);  // Unused
 
 
-INT streamDataSize = NUM_CHANNELS * SCANS_PER_READ;  // Can be smaller? Labjack requires it this size?
+INT streamDataSize = NumAddresses * ScansPerRead;  // Can be smaller? Labjack requires it this size?
 double * streamData = (double *) malloc(sizeof(double) * streamDataSize);
 
 /*-- Function declarations -----------------------------------------*/
@@ -231,6 +237,9 @@ INT frontend_init()
   printf("Connecting to labjack01.ucn.triumf.ca...\n");
   
   // Attempts to open the first Labjack found
+  // LJM_dtANY - 'DeviceType' option opens any supported LabJack device type
+  // LJM_ctANY - 'ConnectionType' option for USB connections 
+  // The IP address is specified in the third, 'Identifier' option
   handle = OpenOrDie(LJM_dtANY, LJM_ctANY, "142.90.151.7");
 
   //handle = OpenOrDie(LJM_dtANY, LJM_ctANY, LJM_idANY);   // Currently only works for direct USB connection
@@ -246,30 +255,43 @@ INT frontend_init()
   int totalSkippedScans = 0;
   int deviceScanBacklog = 0;  int LJMScanBacklog = 0;
 
-  int * aScanList = malloc(sizeof(int) * NUM_CHANNELS);
+  int * aScanList = malloc(sizeof(int) * NumAddresses);
 
-  unsigned int aDataSize = NUM_CHANNELS * SCANS_PER_READ;
+  unsigned int aDataSize = NumAddresses * ScansPerRead;
   double * aData = malloc(sizeof(double) * aDataSize); */
 
   // Clear aData. This is not strictly necessary, but can help debugging.
   //memset(aData, 0, sizeof(double) * aDataSize);
+
+  // streamData is cleared
   memset(streamData, 0, sizeof(double) * streamDataSize);
-  err = LJM_NamesToAddresses(NUM_CHANNELS, CHANNEL_NAMES, aScanList, NULL);
+
+  // Assigns the Channel_Names to the LabJack addresses
+  err = LJM_NamesToAddresses(NumAddresses, CHANNEL_NAMES, aScanList, NULL);
   ErrorCheck(err, "Getting positive channel addresses");
 
+  // Sets the stream configuration, see definition
   HardcodedConfigureStream(handle);
 
-  printf("\nINIT_SCAN_RATE is %02f, SCANS_PER_READ is %d, aScanList is %d  \n", INIT_SCAN_RATE, SCANS_PER_READ, aScanList); // Stewart testing some stuff
-  
-  printf("\nNumber of channels: %d\n", NUM_CHANNELS);
+  printf("\nINIT_SCAN_RATE is %02f, ScansPerRead is %d, aScanList is %d  \n", INIT_SCAN_RATE, ScansPerRead, aScanList); // Stewart testing some stuff
+  printf("\nNumber of channels: %d\n", NumAddresses);
 
   printf("\n");
   printf("Starting stream...\n");
-  err = LJM_eStreamStart(handle, SCANS_PER_READ, NUM_CHANNELS, aScanList,
+
+  // Initializes a stream object and begins streaming (data from LabJack). 
+  // '&INIT_SCAN_RATE' argument sets the number of scans per second, where
+  // a single scan means taking one reading from every address.
+  // 'ScansPerRead' argument determines the number of scans returned by each
+  // individual call of this (LJM_eStreamStart) function. Increasing this
+  // parameter merely gets more data per call of the function.
+  err = LJM_eStreamStart(handle, ScansPerRead, NumAddresses, aScanList,
 			 &INIT_SCAN_RATE);
+
+
   ErrorCheck(err, "LJM_eStreamStart");
   printf("Stream started. Actual scan rate: %.02f Hz (%.02f sample rate)\n",
-	 INIT_SCAN_RATE, INIT_SCAN_RATE * NUM_CHANNELS);
+	 INIT_SCAN_RATE, INIT_SCAN_RATE * NumAddresses);
   printf("\n");
 
 
@@ -475,20 +497,31 @@ INT read_labjack_event(char *pevent, INT iter)
   // MODIFICATION TO COLLECT DATA AT 100Hz (FEB 4th)
   
   // COLLECT DATA FOR MEAN AND STD
-  double subData[NUM_CHANNELS*SAMPLES_PER_AVG];
-  double sum[NUM_CHANNELS] = {0};
-  double mean[NUM_CHANNELS] = {0};
-  double std[NUM_CHANNELS] = {0};
+  double subData[NumAddresses*SAMPLES_PER_AVG];
+  double sum[NumAddresses] = {0};
+  double mean[NumAddresses] = {0};
+  double std[NumAddresses] = {0};
   int i, j;
+
   for (j=0; j<DP_PER_MEVENT; j++) {
+
     // POLL LABJACK SAMPLES_PER_AVG TIMES
     for(i=0; i<SAMPLES_PER_AVG; i++) {
+      
+      // Returns data from an initialized and running LJM stream buffer
+      // such as the one initialized by LJM_eStreamStart().
+      // The streamData argment is the array in which the values being read
+      // will be stored. Must be large enough to hold 
+      // (ScansPerRead * NumAddresses) many values, where these arguments 
+      // were passes to LJM_eStreamStart 
       err = LJM_eStreamRead(handle, streamData, &deviceScanBacklog, &LJMScanBacklog);
+
       if(err == 1221){ // ignore errors of type 1221
 
 	static int error_count = 0;
 	error_count++;
 	cm_msg(MINFO,"read_labjack_event","Gotten labjack error with error number = 1221, Number errors: %i",error_count);
+
 	if(error_count > 100) ErrorCheck(err, "LJM_eStreamRead too many errors");
 	
 	  
@@ -496,13 +529,18 @@ INT read_labjack_event(char *pevent, INT iter)
 	ErrorCheck(err, "LJM_eStreamRead Cann I add extra info???");
       }
 
-      for (channel = 0; channel < NUM_CHANNELS; channel++) {
+      for (channel = 0; channel < NumAddresses; channel++) {
         subData[SAMPLES_PER_AVG*channel + i] = streamData[channel];
       }
+
+      // Testing to make sure the averaging and STD calculations are 
+      // perfomed appropriately
+      printf("Sample %d: %.09f\n", i, err);
+
     }
 
     // CALCULATE MEAN AND STD
-    for(channel = 0; channel < NUM_CHANNELS; channel++) {
+    for(channel = 0; channel < NumAddresses; channel++) {
       sum[channel] = 0;
       std[channel] = 0;
 
@@ -528,7 +566,7 @@ INT read_labjack_event(char *pevent, INT iter)
     // ASSEMBLE DATA FOR MIDAS
     // time, sample0, sample1, sample2.... sample99
     // sample# = ch0_val, ch0_std, ch1_val, ch1_std... etc.
-    for (channel = 0; channel < NUM_CHANNELS; channel++) {
+    for (channel = 0; channel < NumAddresses; channel++) {
       if (j == 0){
         //printf(" Channel: %i    \t Mean: %f \t Std %f \n", channel, mean[channel], std[channel]);
 	printf(" %s\t Mean: %f \t Std %f \n", CHANNEL_NAMES[channel], mean[channel], std[channel]);
