@@ -486,10 +486,9 @@ INT read_labjack_event(char *pevent, INT iter)
       err = LJM_eStreamRead(handle, streamData, &deviceScanBacklog, &LJMScanBacklog);
       if(err == 1221){ // ignore errors of type 1221
 
-	cm_msg(MINFO,"read_labjack_event","Gotten labjack error with error number = 1221");
-
 	static int error_count = 0;
 	error_count++;
+	cm_msg(MINFO,"read_labjack_event","Gotten labjack error with error number = 1221, Number errors: %i",error_count);
 	if(error_count > 100) ErrorCheck(err, "LJM_eStreamRead too many errors");
 	
 	  
