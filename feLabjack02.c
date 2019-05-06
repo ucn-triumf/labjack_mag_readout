@@ -99,22 +99,22 @@ const char *CHANNEL_NAMES[] = {
 enum { NumAddresses = sizeof(CHANNEL_NAMES) / sizeof(CHANNEL_NAMES[0]) };
 
 
-/* double INIT_SCAN_RATE = 100000/NumAddresses*0.9;
+/* double ScanRate = 100000/NumAddresses*0.9;
 
-INT ScansPerRead = INIT_SCAN_RATE/NumAddresses;
+INT ScansPerRead = ScanRate/NumAddresses;
 
 */  
 
 // How fast to stream in Hz
-//double INIT_SCAN_RATE = 1000; // Edited by Stewart - was 2000 originally
-double INIT_SCAN_RATE = 1500; // Edited by Stewart - was 2000 originally
+//double ScanRate = 1000; // Edited by Stewart - was 2000 originally
+double ScanRate = 1500; // Edited by Stewart - was 2000 originally
 
-// Cliff comment INIT_SCAN_RATE, labjack variable, check documentation for true meaning. Cliff's guess: Determines the sampling frequency of the labjack 
+// Cliff comment ScanRate, labjack variable, check documentation for true meaning. Cliff's guess: Determines the sampling frequency of the labjack 
 // which is then distributed amongst all the channels
 
-// How many scans to get per call to LJMeStreamRead. INIT_SCAN_RATE/2 is
+// How many scans to get per call to LJMeStreamRead. ScanRate/2 is
 // recommended
-//int ScansPerRead = INIT_SCAN_RATE/10; // Edited by Stewart - was INIT_SCAN_RATE / 2 initially
+//int ScansPerRead = ScanRate/10; // Edited by Stewart - was ScanRate / 2 initially
 
 
 // Cliffs comments on SAMPLES_PER_AVG: Cliff defined variable. Dictactes how many samples from a channel is taken before a mean and std calculation is made and then passed to MIDAS.
@@ -122,13 +122,13 @@ int SAMPLES_PER_AVG = 10;
 int DP_PER_MEVENT = 1;   // Data points per MIDAS event for each channel each second (Hz)
 
 // Cliff's comments on ScansPerRead: Labjack defined variable. Dictates how many times labjack will sample a channel before the channel value is reported when read.
-int ScansPerRead = (INIT_SCAN_RATE / (SAMPLES_PER_AVG*DP_PER_MEVENT)) + 1;  // plus 1 to ensure labjack buffer empties faster than it fills
+int ScansPerRead = (ScanRate / (SAMPLES_PER_AVG*DP_PER_MEVENT)) + 1;  // plus 1 to ensure labjack buffer empties faster than it fills
 
 // Cliff comment's example sampling frequencies:
 // 1 Hz:
 // DP_PER_MEVENT = 1
 // SAMPLES_PER_AVG = 10
-// INIT_SCAN_RATE = 1500 (labjack samples channel each of the 15 channels 100 times per read)
+// ScanRate = 1500 (labjack samples channel each of the 15 channels 100 times per read)
 // ScansPerRead (calculated) = 150
 
 
@@ -273,25 +273,25 @@ INT frontend_init()
   // Sets the stream configuration, see definition
   HardcodedConfigureStream(handle);
 
-  printf("\nINIT_SCAN_RATE is %02f, ScansPerRead is %d, aScanList is %d  \n", INIT_SCAN_RATE, ScansPerRead, aScanList); // Stewart testing some stuff
+  printf("\nScanRate is %02f, ScansPerRead is %d, aScanList is %d  \n", ScanRate, ScansPerRead, aScanList); // Stewart testing some stuff
   printf("\nNumber of channels: %d\n", NumAddresses);
 
   printf("\n");
   printf("Starting stream...\n");
 
   // Initializes a stream object and begins streaming (data from LabJack). 
-  // '&INIT_SCAN_RATE' argument sets the number of scans per second, where
+  // '&ScanRate' argument sets the number of scans per second, where
   // a single scan means taking one reading from every address.
   // 'ScansPerRead' argument determines the number of scans returned by each
   // individual call of this (LJM_eStreamStart) function. Increasing this
   // parameter merely gets more data per call of the function.
   err = LJM_eStreamStart(handle, ScansPerRead, NumAddresses, aScanList,
-			 &INIT_SCAN_RATE);
+			 &ScanRate);
 
 
   ErrorCheck(err, "LJM_eStreamStart");
   printf("Stream started. Actual scan rate: %.02f Hz (%.02f sample rate)\n",
-	 INIT_SCAN_RATE, INIT_SCAN_RATE * NumAddresses);
+	 ScanRate, ScanRate * NumAddresses);
   printf("\n");
 
 
@@ -368,6 +368,7 @@ INT resume_run(INT run_number, char *error)
 
 INT HardcodedConfigureStream(INT handle)
 {
+
   const int STREAM_TRIGGER_INDEX = 0;
   const int STREAM_CLOCK_SOURCE = 0;
   const int STREAM_RESOLUTION_INDEX = 0;
@@ -532,10 +533,6 @@ INT read_labjack_event(char *pevent, INT iter)
       for (channel = 0; channel < NumAddresses; channel++) {
         subData[SAMPLES_PER_AVG*channel + i] = streamData[channel];
       }
-
-      // Testing to make sure the averaging and STD calculations are 
-      // perfomed appropriately
-      printf("Sample %d: %.09f\n", i, err);
 
     }
 
