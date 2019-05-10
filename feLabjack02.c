@@ -1,12 +1,6 @@
 /********************************************************************\
  Labjack readout frontend
  Thomas Lindner (TRIUMF)
-
-Useful LabJack nomenclature 
- Address => The Modbus address of one channel.
- Sample => A reading from one address.
- Scan => One reading from all addresses in the scan list.
- SampleRate = NumAddresses * ScanRate
 \********************************************************************/
 
 #include <vector>
@@ -20,12 +14,9 @@ Useful LabJack nomenclature
 #include <unistd.h>
 #include <string.h>
 #include <time.h>
-
+#include <sys/time.h>
 #include <math.h>
-
 #include <LabJackM.h>
-
-
 #include "LJM_Utilities.h"
 
 /* make frontend functions callable from the C framework */
@@ -58,12 +49,10 @@ INT event_buffer_size = 20 * 1000000;
 /* handle for labjack device*/
 INT handle;
 
-
 /*
 // FOR OLD DAQ BOARD, SINGLE 
 const char *CHANNEL_NAMES[] = {"AIN4", "AIN5", "AIN6"};
 */
-
 
 /*
 // For Fluxgate Input Orientation (x, y, z) in order: 1, 4, 5, 8, 9
@@ -75,7 +64,6 @@ const char *CHANNEL_NAMES[] = {
 	"AIN115", "AIN117", "AIN119"
 };
 */
-
 
 // For Fluxgate Input Orientation (x, y, z) in order: 2, 3, 6, 7, 10
 // These channel names are assigned to LabJack addresses in frontend_init()
@@ -95,42 +83,62 @@ const char *CHANNEL_NAMES[] = {
 // 4      3            1
 // 5      2            0
 
-
 enum { NumAddresses = sizeof(CHANNEL_NAMES) / sizeof(CHANNEL_NAMES[0]) };
 
+/********************************************************************\
+	Some notes on LabJack configuration
 
-/* double ScanRate = 100000/NumAddresses*0.9;
+An "address" refers to the Modbus address of a single channel. A "sample"
+refers to a single value, from a single address. A "scan" refers to a reading
+of one value from each of the addresses. Hence the "Sample Rate" will be a 
+factor of NumAddresses larger than the ScanRate. The DAQ sequence follows the
+following steps:
 
-INT ScansPerRead = ScanRate/NumAddresses;
+	1) The flux gates make measurements, and place values in their buffer,
+		LabJack calls it the "device buffer". This process occurs at the 
+		ScanRate specified by the user.
+	2) When eStreamStart is first called, a "stream" is initialized, along
+		with a second buffer, called the "LJM buffer". In the background,
+		LabJack is continuously transferring data from the device buffer to
+		the LabJack buffer. This process is quite efficient, happening on a
+		separate thread, which explains why one shouldn't ever really see 
+		a non-zero value in the print out of "deviceScanBacklog" (the present
+		size of data in the device buffer upon most recent reading). 
+	3) When eStreamRead is called, the amount of data specified by 
+		ScansPerRead is transferred to the array that is given to eStreamRead
+		as an argument. 
+	4) Analysis is performed on this acquired data, and then it is passed to 
+		MIDAS as an event.
 
-*/  
+Wanting to change the time interval over which values are collected, averaged,
+and given to MIDAS as a single event? -> Change the ODB Period setting (link
+below)
 
-// How fast to stream in Hz
-//double ScanRate = 1000; // Edited by Stewart - was 2000 originally
-double ScanRate = 1500; // Edited by Stewart - was 2000 originally
+Wanting to change the number of measurements used in the averaging for a 
+single MIDAS event? -> Change the ScanRate parameter below. Note how this 
+implies a frequency of (ScanRate) / (MIDAS Period) for the independent 
+samples before averaging. 
 
-// Cliff comment ScanRate, labjack variable, check documentation for true meaning. Cliff's guess: Determines the sampling frequency of the labjack 
-// which is then distributed amongst all the channels
+\********************************************************************/
 
-// How many scans to get per call to LJMeStreamRead. ScanRate/2 is
-// recommended
-//int ScansPerRead = ScanRate/10; // Edited by Stewart - was ScanRate / 2 initially
+// This determines how many values will be grabbed, per address, per 
+// MIDAS ODB Period. The "Period" parameter under MIDAS' ODB settings is changed
+// at https://daq01.ucn.triumf.ca/Equipment/Labjack02/Common . The Period parameter controls how often
+// eStreamRead is called, and eStreamRead is confgured such that it will halt
+// until enough scanned data is available for it to read (as specified by 
+// ScansPerRead). Thus one needs to be careful to coordinate these timing
+// parameters, as described above. The ScanRate variable is not necessarily in
+// Hz, in fact it is only in Hz if the ODB Period is equal to 1000 (in 
+// micro-sec). This rate is really in units of [scans per ODB Period].
+double ScanRate = 10; 
 
+// Data points per MIDAS event for each channel
+// (!!!) I do not understand why this would ever change?
+int DP_PER_MEVENT = 1;  
 
-// Cliffs comments on SAMPLES_PER_AVG: Cliff defined variable. Dictactes how many samples from a channel is taken before a mean and std calculation is made and then passed to MIDAS.
-int SAMPLES_PER_AVG = 10;
-int DP_PER_MEVENT = 1;   // Data points per MIDAS event for each channel each second (Hz)
-
-// Cliff's comments on ScansPerRead: Labjack defined variable. Dictates how many times labjack will sample a channel before the channel value is reported when read.
-int ScansPerRead = (ScanRate / (SAMPLES_PER_AVG*DP_PER_MEVENT)) + 1;  // plus 1 to ensure labjack buffer empties faster than it fills
-
-// Cliff comment's example sampling frequencies:
-// 1 Hz:
-// DP_PER_MEVENT = 1
-// SAMPLES_PER_AVG = 10
-// ScanRate = 1500 (labjack samples channel each of the 15 channels 100 times per read)
-// ScansPerRead (calculated) = 150
-
+// This determines the number of scans that are pulled from the LJM buffer
+// each call to eStreamRead.
+int ScansPerRead = ScanRate*DP_PER_MEVENT;
 
 /*
 // Channels/Addresses to stream. NumAddresses can be less than or equal to
@@ -146,11 +154,10 @@ INT err, iteration, channel;
 
 INT * aScanList = (INT *) malloc(sizeof(int) * NumAddresses);
 
-//INT aDataSize = NumAddresses * ScansPerRead;
-//double * aData = (double *) malloc(sizeof(double) * aDataSize);  // Unused
-
-
-INT streamDataSize = NumAddresses * ScansPerRead;  // Can be smaller? Labjack requires it this size?
+// streamData is the array buffer within which LabJack will place data from
+// the device, before it is read by eStreamRead. This just needs to be large
+// enough to handle the ScanRate as initialized in eStreamStart
+INT streamDataSize = NumAddresses * ScansPerRead;
 double * streamData = (double *) malloc(sizeof(double) * streamDataSize);
 
 /*-- Function declarations -----------------------------------------*/
@@ -169,30 +176,39 @@ INT read_labjack_event(char *pevent, INT iter);
 
 /*-- Equipment list ------------------------------------------------*/
 
+// https://midas.triumf.ca/MidasWiki/index.php/Equipment_List_Parameters
+// The above docs reference covers this aspect of MIDAS interaction well
+// These parameters are read only once from this program by MIDAS, on the
+// very first initialization of the frontend. Henceforth, any modification
+// must be done on the ODB, at:
+// https://daq01.ucn.triumf.ca/Equipment/Labjack02/Common
+//
+// The EQ_PERIODIC equipment type is one where "no hardware requirement is 
+// necessary to trigger the readout function. Instead, the readout routine 
+// associated with this equipment is called periodically.The Period field in 
+// the equipment declaration is used in this case to specify the time interval
+// between calls to the readout function."
+
 EQUIPMENT equipment[] = {
 
-   {"Labjack02",               /* equipment name */
-    {1, 0,                   /* event ID, trigger mask */
-     "SYSTEM",               /* event buffer */
-     EQ_PERIODIC,              /* equipment type */
-     LAM_SOURCE(0, 0xFFFFFF),        /* event source crate 0, all stations */
-     "MIDAS",                /* format */
-     TRUE,                   /* enabled */
-     RO_ALWAYS,           /* read only when running */
+	{"Labjack02",               // equipment name 
+		{1, 0,                     // event ID, trigger mask 
+     	"SYSTEM",                 // event buffer 
+     	EQ_PERIODIC,              // equipment type (see MIDAS docs)
+     	LAM_SOURCE(0, 0xFFFFFF),  // event source crate 0, all stations 
+     	"MIDAS",                  // format 
+     	TRUE,                     // enabled 
+     	RO_ALWAYS,                // read only when running 
+     	1000,                     // period: run readout routine every 1000ms
+     	0,                        // stop run after this event limit 
+     	0,                        // number of sub events 
+     	1,                        // don't log history 
+     	"", "", "",
+    	},
+   read_labjack_event,        // readout routine 
+   },
 
-     1,                    /* poll for 1000ms */ // Edited by Stewart - runs readout routine every 1ms(?)
-     0,                      /* stop run after this event limit */
-     0,                      /* number of sub events */
-     1,                      /* don't log history */
-     "", "", "",},
-//     1,                      /* don't log history */ - Edited by Stewart, uncertain why this was here
-//     "", "", "",},
-//    1,                      /* don't log history */
-//     "", "", "",},
-    read_labjack_event,      /* readout routine */
-    },
-
-    {""}
+   {""}
 };
 
 #ifdef __cplusplus
@@ -207,92 +223,85 @@ gateway: 142.90.151.254
 DNS : 142.90.100.19
 alt DNS: 142.90.113.69
 
-  These routines are called whenever a system transition like start/
-  stop of a run occurs. The routines are called on the following
-  occations:
+	These routines are called whenever a system transition like start/
+	stop of a run occurs. The routines are called on the following
+	occations:
 
-  frontend_init:  When the frontend program is started. This routine
-                  should initialize the hardware.
+	frontend_init:  When the frontend program is started. This routine
+                  	should initialize the hardware.
 
-  frontend_exit:  When the frontend program is shut down. Can be used
-                  to releas any locked resources like memory, commu-
-                  nications ports etc.
+  	frontend_exit:  When the frontend program is shut down. Can be used
+                  	to releas any locked resources like memory, commu-
+                  	nications ports etc.
 
-  begin_of_run:   When a new run is started. Clear scalers, open
-                  rungates, etc.
+  	begin_of_run:   When a new run is started. Clear scalers, open
+                  	rungates, etc.
 
-  end_of_run:     Called on a request to stop a run. Can send
-                  end-of-run event and close run gates.
+  	end_of_run:     Called on a request to stop a run. Can send
+                  	end-of-run event and close run gates.
 
-  pause_run:      When a run is paused. Should disable trigger events.
+  	pause_run:      When a run is paused. Should disable trigger events.
 
-  resume_run:     When a run is resumed. Should enable trigger events.
+  	resume_run:     When a run is resumed. Should enable trigger events.
 \********************************************************************/
 
 /*-- Frontend Init -------------------------------------------------*/
 INT frontend_init()
 {  
   
-  // Connect to the labjack
-  printf("Connecting to labjack01.ucn.triumf.ca...\n");
+  	// Connect to the labjack
+  	printf("Connecting to labjack01.ucn.triumf.ca...\n");
   
-  // Attempts to open the first Labjack found
-  // LJM_dtANY - 'DeviceType' option opens any supported LabJack device type
-  // LJM_ctANY - 'ConnectionType' option for USB connections 
-  // The IP address is specified in the third, 'Identifier' option
-  handle = OpenOrDie(LJM_dtANY, LJM_ctANY, "142.90.151.7");
+  	// Attempts to open the first Labjack found
+  	// LJM_dtANY - 'DeviceType' option opens any supported LabJack device type
+  	// LJM_ctANY - 'ConnectionType' option for USB connections 
+  	// The IP address is specified in the third, 'Identifier' option
+  	handle = OpenOrDie(LJM_dtANY, LJM_ctANY, "142.90.151.7");
 
-  //handle = OpenOrDie(LJM_dtANY, LJM_ctANY, LJM_idANY);   // Currently only works for direct USB connection
+	// Currently only works for direct USB connection
+  	//handle = OpenOrDie(LJM_dtANY, LJM_ctANY, LJM_idANY);   
   
-  PrintDeviceInfoFromHandle(handle);
-  printf("\n");
+  	PrintDeviceInfoFromHandle(handle);
+  	printf("\n");
 
-  
+  	/*
+  	int err, iteration, channel;
+  	int numSkippedScans = 0;
+  	int totalSkippedScans = 0;
+  	int deviceScanBacklog = 0;  int LJMScanBacklog = 0;
 
-  /*
-  int err, iteration, channel;
-  int numSkippedScans = 0;
-  int totalSkippedScans = 0;
-  int deviceScanBacklog = 0;  int LJMScanBacklog = 0;
+  	int * aScanList = malloc(sizeof(int) * NumAddresses);
 
-  int * aScanList = malloc(sizeof(int) * NumAddresses);
+  	unsigned int aDataSize = NumAddresses * ScansPerRead;
+  	double * aData = malloc(sizeof(double) * aDataSize); */
 
-  unsigned int aDataSize = NumAddresses * ScansPerRead;
-  double * aData = malloc(sizeof(double) * aDataSize); */
+  	// Clear aData. This is not strictly necessary, but can help debugging.
+  	//memset(aData, 0, sizeof(double) * aDataSize);
 
-  // Clear aData. This is not strictly necessary, but can help debugging.
-  //memset(aData, 0, sizeof(double) * aDataSize);
+  	// streamData is cleared
+	memset(streamData, 0, sizeof(double) * streamDataSize);
 
-  // streamData is cleared
-  memset(streamData, 0, sizeof(double) * streamDataSize);
+	// Assigns the Channel_Names to the LabJack addresses
+	err = LJM_NamesToAddresses(NumAddresses, CHANNEL_NAMES, aScanList, NULL);
+	ErrorCheck(err, "Getting positive channel addresses");
 
-  // Assigns the Channel_Names to the LabJack addresses
-  err = LJM_NamesToAddresses(NumAddresses, CHANNEL_NAMES, aScanList, NULL);
-  ErrorCheck(err, "Getting positive channel addresses");
+	// Sets the stream configuration, see definition
+	HardcodedConfigureStream(handle);
 
-  // Sets the stream configuration, see definition
-  HardcodedConfigureStream(handle);
+	printf("\nNumber of channels: %d\n", NumAddresses);
 
-  printf("\nScanRate is %02f, ScansPerRead is %d, aScanList is %d  \n", ScanRate, ScansPerRead, aScanList); // Stewart testing some stuff
-  printf("\nNumber of channels: %d\n", NumAddresses);
+	printf("\n");
+	printf("Starting stream...\n");
 
-  printf("\n");
-  printf("Starting stream...\n");
+	// Initializes a stream object and begins streaming (data from LabJack). 
+	err = LJM_eStreamStart(handle, ScansPerRead, NumAddresses, aScanList,
+				 &ScanRate);
 
-  // Initializes a stream object and begins streaming (data from LabJack). 
-  // '&ScanRate' argument sets the number of scans per second, where
-  // a single scan means taking one reading from every address.
-  // 'ScansPerRead' argument determines the number of scans returned by each
-  // individual call of this (LJM_eStreamStart) function. Increasing this
-  // parameter merely gets more data per call of the function.
-  err = LJM_eStreamStart(handle, ScansPerRead, NumAddresses, aScanList,
-			 &ScanRate);
+	ErrorCheck(err, "LJM_eStreamStart");
 
-
-  ErrorCheck(err, "LJM_eStreamStart");
-  printf("Stream started. Actual scan rate: %.02f Hz (%.02f sample rate)\n",
-	 ScanRate, ScanRate * NumAddresses);
-  printf("\n");
+	printf("Stream started. Actual scan rate: %.02f Hz (%.02f sample rate)\n",
+		 ScanRate, ScanRate * NumAddresses);
+	printf("\n");
 
 
   return SUCCESS;
@@ -305,22 +314,22 @@ INT frontend_init()
 INT frontend_exit()
 {
 
-  printf("Stopping stream\n");
-  err = LJM_eStreamStop(handle);
-  ErrorCheck(err, "Stopping stream");
+	printf("Stopping stream\n");
+	err = LJM_eStreamStop(handle);
+	ErrorCheck(err, "Stopping stream");
 
-  // Do any disconnecting of the labjack
-  printf("Disconnecting from labjack!\n");
+	// Do any disconnecting of the labjack
+	printf("Disconnecting from labjack!\n");
 
-  free(streamData);
-  //free(aData);
-  free(aScanList);
+	free(streamData);
+	//free(aData);
+	free(aScanList);
 
-  CloseOrDie(handle);
+	CloseOrDie(handle);
 
-  WaitForUserIfWindows();
+	WaitForUserIfWindows();
 
-  return SUCCESS;
+	return SUCCESS;
 }
 
 /*-- Begin of Run --------------------------------------------------*/
@@ -328,12 +337,12 @@ INT frontend_exit()
 INT begin_of_run(INT run_number, char *error)
 {
 
-  // Do any setup of the labjack that needs to be done at the begin of a run 
-  printf("BOR setup\n");
-  
+	// Do any setup of the labjack that needs to be done at the begin of a run 
+	printf("BOR setup\n");
 
-  
-  return SUCCESS;
+
+
+	return SUCCESS;
 }
 
 /*-- End of Run ----------------------------------------------------*/
@@ -341,27 +350,31 @@ INT begin_of_run(INT run_number, char *error)
 INT end_of_run(INT run_number, char *error)
 {
 
-  /* if (totalSkippedScans) {
-     printf("\n****** Total number of skipped scans: %d ******\n\n",
+	/* if (totalSkippedScans) {
+	 printf("\n****** Total number of skipped scans: %d ******\n\n",
 	   totalSkippedScans);
-   }
-  */
+	}
+	*/
 
-   return SUCCESS;
+	return SUCCESS;
 }
 
 /*-- Pause Run -----------------------------------------------------*/
 
 INT pause_run(INT run_number, char *error)
 {
-   return SUCCESS;
+
+	return SUCCESS;
+
 }
 
 /*-- Resume Run ----------------------------------------------------*/
 
 INT resume_run(INT run_number, char *error)
 {
-   return SUCCESS;
+
+	return SUCCESS;
+
 }
 
 /*-- Create Stream Configuration------------------------------------*/
@@ -369,55 +382,61 @@ INT resume_run(INT run_number, char *error)
 INT HardcodedConfigureStream(INT handle)
 {
 
-  const int STREAM_TRIGGER_INDEX = 0;
-  const int STREAM_CLOCK_SOURCE = 0;
-  const int STREAM_RESOLUTION_INDEX = 0;
-  const double STREAM_SETTLING_US = 0;
-  const double AIN_ALL_RANGE = 0;
-  const int AIN_ALL_NEGATIVE_CH = LJM_GND;
+	const int STREAM_TRIGGER_INDEX = 0;
+	const int STREAM_CLOCK_SOURCE = 0;
+	const int STREAM_RESOLUTION_INDEX = 0;
+	const double STREAM_SETTLING_US = 0;
+	const double AIN_ALL_RANGE = 0;
+	const int AIN_ALL_NEGATIVE_CH = LJM_GND;
 
-  printf("Writing configurations:\n");
+	printf("Writing configurations:\n");
 
-  if (STREAM_TRIGGER_INDEX == 0) {
-    printf("    Ensuring triggered stream is disabled:");
-  }
-  printf("    Setting STREAM_TRIGGER_INDEX to %d\n", STREAM_TRIGGER_INDEX);
-  WriteNameOrDie(handle, "STREAM_TRIGGER_INDEX", STREAM_TRIGGER_INDEX);
+	if (STREAM_TRIGGER_INDEX == 0) {
+	printf("    Ensuring triggered stream is disabled:");
+	}
+	printf("    Setting STREAM_TRIGGER_INDEX to %d\n", STREAM_TRIGGER_INDEX);
+	WriteNameOrDie(handle, "STREAM_TRIGGER_INDEX", STREAM_TRIGGER_INDEX);
 
-  if (STREAM_CLOCK_SOURCE == 0) {
-    printf("    Enabling internally-clocked stream:");
-  }
-  printf("    Setting STREAM_CLOCK_SOURCE to %d\n", STREAM_CLOCK_SOURCE);
-  WriteNameOrDie(handle, "STREAM_CLOCK_SOURCE", STREAM_CLOCK_SOURCE);
+	if (STREAM_CLOCK_SOURCE == 0) {
+	printf("    Enabling internally-clocked stream:");
+	}
+	printf("    Setting STREAM_CLOCK_SOURCE to %d\n", STREAM_CLOCK_SOURCE);
+	WriteNameOrDie(handle, "STREAM_CLOCK_SOURCE", STREAM_CLOCK_SOURCE);
 
-  // Configure the analog inputs' negative channel, range, settling time and
-  // resolution.
-  // Note: when streaming, negative channels and ranges can be configured for
-  // individual analog inputs, but the stream has only one settling time and
-  // resolution.
-  printf("    Setting STREAM_RESOLUTION_INDEX to %d\n",
+	// Configure the analog inputs' negative channel, range, settling time and
+	// resolution.
+	// Note: when streaming, negative channels and ranges can be configured 
+	// for individual analog inputs, but the stream has only one settling time
+	// and resolution.
+	printf("    Setting STREAM_RESOLUTION_INDEX to %d\n",\
 	 STREAM_RESOLUTION_INDEX);
-  WriteNameOrDie(handle, "STREAM_RESOLUTION_INDEX", STREAM_RESOLUTION_INDEX);
+	WriteNameOrDie(handle, "STREAM_RESOLUTION_INDEX", \
+					STREAM_RESOLUTION_INDEX);
 
-  printf("    Setting STREAM_SETTLING_US to %f\n", STREAM_SETTLING_US);
-  WriteNameOrDie(handle, "STREAM_SETTLING_US", STREAM_SETTLING_US);
+	printf("    Setting STREAM_SETTLING_US to %f\n", STREAM_SETTLING_US);
+	WriteNameOrDie(handle, "STREAM_SETTLING_US", STREAM_SETTLING_US);
 
-  printf("    Setting AIN_ALL_RANGE to %f\n", AIN_ALL_RANGE);
-  WriteNameOrDie(handle, "AIN_ALL_RANGE", AIN_ALL_RANGE);
+	printf("    Setting AIN_ALL_RANGE to %f\n", AIN_ALL_RANGE);
+	WriteNameOrDie(handle, "AIN_ALL_RANGE", AIN_ALL_RANGE);
 
-  printf("    Setting AIN_ALL_NEGATIVE_CH to ");
+	printf("    Setting AIN_ALL_NEGATIVE_CH to ");
 
-  if (AIN_ALL_NEGATIVE_CH == LJM_GND) {
-    printf("LJM_GND");
-  }
-  else {
-    printf("%d", AIN_ALL_NEGATIVE_CH);
-  }
+	if (AIN_ALL_NEGATIVE_CH == LJM_GND) {
 
-  printf("\n");
-  WriteNameOrDie(handle, "AIN_ALL_NEGATIVE_CH", AIN_ALL_NEGATIVE_CH);
+		printf("LJM_GND");
 
-  return SUCCESS;
+	}
+
+	else {
+
+		printf("%d", AIN_ALL_NEGATIVE_CH);
+
+	}
+
+	printf("\n");
+	WriteNameOrDie(handle, "AIN_ALL_NEGATIVE_CH", AIN_ALL_NEGATIVE_CH);
+
+	return SUCCESS;
 }
 
 
@@ -425,10 +444,10 @@ INT HardcodedConfigureStream(INT handle)
 
 INT frontend_loop()
 {
-   /* if frontend_call_loop is true, this routine gets called when
-      the frontend is idle or once between every event */
-  usleep(50);
-  return SUCCESS;
+	/* if frontend_call_loop is true, this routine gets called when
+	  the frontend is idle or once between every event */
+	usleep(50);
+	return SUCCESS;
 }
 
 /*------------------------------------------------------------------*/
@@ -446,19 +465,22 @@ extern "C" { INT poll_event(INT source, INT count, BOOL test)
    is available. If test equals TRUE, don't return. The test
    flag is used to time the polling */
 {
-   int i;
+	int i;
 
-   for (i = 0; i < count; i++) {
-//      cam_lam_read(LAM_SOURCE_CRATE(source), &lam);
+	for (i = 0; i < count; i++) {
+		//      cam_lam_read(LAM_SOURCE_CRATE(source), &lam);
 
-//      if (lam & LAM_SOURCE_STATION(source))
-         if (!test)
-            return 1;
-   }
+		//      if (lam & LAM_SOURCE_STATION(source))
+		if (!test) {
 
-   //usleep(1000);
-   usleep(250);
-   return 0;
+			return 1;
+		}
+
+	}
+
+	//usleep(1000);
+	usleep(250);
+	return 0;
 }
 }
 
@@ -466,116 +488,142 @@ extern "C" { INT poll_event(INT source, INT count, BOOL test)
 // This is not currently used by the DCRC readout
 extern "C" { INT interrupt_configure(INT cmd, INT source, POINTER_T adr)
 {
-   switch (cmd) {
-   case CMD_INTERRUPT_ENABLE:
-      break;
-   case CMD_INTERRUPT_DISABLE:
-      break;
-   case CMD_INTERRUPT_ATTACH:
-      break;
-   case CMD_INTERRUPT_DETACH:
-      break;
-   }
-   return SUCCESS;
+	switch (cmd) {
+	case CMD_INTERRUPT_ENABLE:
+	  break;
+	case CMD_INTERRUPT_DISABLE:
+	  break;
+	case CMD_INTERRUPT_ATTACH:
+	  break;
+	case CMD_INTERRUPT_DETACH:
+	  break;
+	}
+	return SUCCESS;
 } // insert by Stewart trying to fix stuff
 /*-- Event readout -------------------------------------------------*/
 INT read_labjack_event(char *pevent, INT iter)
 {
 
-  /* init bank structure */
-  bk_init32(pevent);
+	struct timeval te; 
+  	gettimeofday(&te, NULL); // get current time
+
+  	// Printing out the time in milliseconds to confirm time between calls to 
+  	// read_labjack_evennt function - debugging
+   	// long long milliseconds = te.tv_sec*1000LL + te.tv_usec/1000; // calculate milliseconds
+   	// printf("milliseconds: %lld\n", milliseconds);
+
+  	/* init bank structure */
+  	bk_init32(pevent);
   
-  double *pdata;
-  /* create bank of double words */
-  bk_create(pevent, "LBJK", TID_DOUBLE, (void **)&pdata);
- 
-  //printf("Reading data from labjack, making bank\n");  
+  	double *pdata;
+  	/* create bank of double words */
+  	bk_create(pevent, "LBJK", TID_DOUBLE, (void **)&pdata); 
+  	int deviceScanBacklog = 0;
+  	int LJMScanBacklog = 0;
   
-  int deviceScanBacklog = 0;
-  int LJMScanBacklog = 0;
+  	// Arrays are initialized to hold the calculated values for MIDAS.
+  	double sum[NumAddresses] = {0};
+  	double mean[NumAddresses] = {0};
+  	double std[NumAddresses] = {0};
+  	int i, j;
 
-  
-  // MODIFICATION TO COLLECT DATA AT 100Hz (FEB 4th)
-  
-  // COLLECT DATA FOR MEAN AND STD
-  double subData[NumAddresses*SAMPLES_PER_AVG];
-  double sum[NumAddresses] = {0};
-  double mean[NumAddresses] = {0};
-  double std[NumAddresses] = {0};
-  int i, j;
+	// Call to eStreamRead should read "ScanRate" many values from each address,
+	err = LJM_eStreamRead(handle, streamData, &deviceScanBacklog, &LJMScanBacklog);
 
-  for (j=0; j<DP_PER_MEVENT; j++) {
+	// Some error checks are performed
+	if(err == 1221){ // ignore errors of type 1221
 
-    // POLL LABJACK SAMPLES_PER_AVG TIMES
-    for(i=0; i<SAMPLES_PER_AVG; i++) {
-      
-      // Returns data from an initialized and running LJM stream buffer
-      // such as the one initialized by LJM_eStreamStart().
-      // The streamData argment is the array in which the values being read
-      // will be stored. Must be large enough to hold 
-      // (ScansPerRead * NumAddresses) many values, where these arguments 
-      // were passes to LJM_eStreamStart 
-      err = LJM_eStreamRead(handle, streamData, &deviceScanBacklog, &LJMScanBacklog);
+		static int error_count = 0;
+		error_count++;
+		cm_msg(MINFO,"read_labjack_event",\
+		       "Gotten labjack error with error number = 1221, ", 
+		       "Number errors: %i",error_count);
 
-      if(err == 1221){ // ignore errors of type 1221
+		if(error_count > 100) {
 
-	static int error_count = 0;
-	error_count++;
-	cm_msg(MINFO,"read_labjack_event","Gotten labjack error with error number = 1221, Number errors: %i",error_count);
+			ErrorCheck(err, "LJM_eStreamRead too many errors");
 
-	if(error_count > 100) ErrorCheck(err, "LJM_eStreamRead too many errors");
-	
+		}
 	  
-      }else{
-	ErrorCheck(err, "LJM_eStreamRead Cann I add extra info???");
-      }
+	}else{
 
-      for (channel = 0; channel < NumAddresses; channel++) {
-        subData[SAMPLES_PER_AVG*channel + i] = streamData[channel];
-      }
+		ErrorCheck(err, "LJM_eStreamRead Cann I add extra info???");
+      	}
+	
 
-    }
-
-    // CALCULATE MEAN AND STD
+    // The mean and STD of the 10 scans are calculated for each channel.
     for(channel = 0; channel < NumAddresses; channel++) {
-      sum[channel] = 0;
-      std[channel] = 0;
 
-      // MEAN
-      for(i=0; i<SAMPLES_PER_AVG; i++){
-        sum[channel] += subData[channel*SAMPLES_PER_AVG + i];
-      }
-      mean[channel] = sum[channel] / SAMPLES_PER_AVG;
+		// These array values are initialized to 0.
+      	sum[channel] = 0;
+      	std[channel] = 0;
 
-      // STD
-      for(i=0; i<SAMPLES_PER_AVG; i++){
-        std[channel] += pow(subData[channel*SAMPLES_PER_AVG + i] - mean[channel], 2);
-      }
-      std[channel] = sqrt(std[channel] / SAMPLES_PER_AVG);
-    }
+      	// The mean is calculated for an individual channel by looping through
+		// the 10 samples read for the channel.
+      	for(i=0; i<ScanRate; i++){
+
+        	sum[channel] += streamData[channel + NumAddresses*i];
+			
+			// a print test
+			//printf("Presently indexing %d from streamData\n", \
+					channel + NumAddresses*i);
+			//printf("Channel %d, sample %d value: %f\n", channel, i, \
+					streamData[channel + NumAddresses*i]);
+
+      	}
+
+      	mean[channel] = sum[channel] / ScanRate;
+
+      	// The standard deviation is calculating using a similar iteration.
+		for(i=0; i<ScanRate; i++){
+
+        	std[channel] += pow(streamData[channel + NumAddresses*i] \
+						 - mean[channel], 2);
+      	
+		}
+
+      	std[channel] = sqrt(std[channel] / ScanRate);
+    	
+	}
 
     // Timestamp once per second
     if (j == 0){
-      printf("iteration: %d - deviceScanBacklog: %d, LJMScanBacklog: %d\n", iteration, deviceScanBacklog, LJMScanBacklog);
-      *pdata++ = (double)time(NULL);
-      //*pdata++ = (float)time(NULL);   // test
+
+      	// deviceScanBackLog is the number of scans left in the device buffer
+      	// whereas LJMScanBackLog is the number of scans left in the LabJack
+      	// buffer. Recall that a single "scan" refers to a single reading from 
+      	// each channel.
+      	printf("iteration: %d - deviceScanBacklog: %d, LJMScanBacklog: %d\n",\
+	     	   iteration, deviceScanBacklog, LJMScanBacklog);
+
+      	*pdata++ = (double)time(NULL);
+
     }
+
     // ASSEMBLE DATA FOR MIDAS
     // time, sample0, sample1, sample2.... sample99
     // sample# = ch0_val, ch0_std, ch1_val, ch1_std... etc.
     for (channel = 0; channel < NumAddresses; channel++) {
-      if (j == 0){
-        //printf(" Channel: %i    \t Mean: %f \t Std %f \n", channel, mean[channel], std[channel]);
-	printf(" %s\t Mean: %f \t Std %f \n", CHANNEL_NAMES[channel], mean[channel], std[channel]);
-      }
-      *pdata++ = mean[channel];
-      *pdata++ = std[channel];
+
+      	if (j == 0){
+
+			printf(" %s\t Mean: %f \t Std %f \n", \
+					CHANNEL_NAMES[channel], mean[channel], std[channel]);
+      
+		}
+
+	    *pdata++ = mean[channel];
+		*pdata++ = std[channel];
     }
-  }
+  
 
-  //int size = bk_close(pevent, pdata);
-  bk_close(pevent, pdata);
-  return bk_size(pevent);
+
+	//int size = bk_close(pevent, pdata);
+  	bk_close(pevent, pdata);
+  	return bk_size(pevent);
 
 }
 }
+
+
+
