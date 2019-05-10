@@ -46,8 +46,12 @@ INT max_event_size_frag = 2 * 1024 * 1024;
 /* buffer size to hold events */
 INT event_buffer_size = 20 * 1000000;
 
+// HAndle for ODB
+HNDLE hDB;
+
 /* handle for labjack device*/
 INT handle;
+
 
 /*
 // FOR OLD DAQ BOARD, SINGLE 
@@ -248,9 +252,17 @@ alt DNS: 142.90.113.69
 /*-- Frontend Init -------------------------------------------------*/
 INT frontend_init()
 {  
-  
+
+        // ____________________________________________        
+        // ********************************************
+        // This configuration should happen only once when the program is initialized. 
+        int size;
+        char device[256];
+        size = sizeof(device);
+        db_get_value(hDB,0,"/Equipment/Labjack02/Settings/Device",&device,&size,TID_STRING,1);
+
   	// Connect to the labjack
-  	printf("Connecting to labjack01.ucn.triumf.ca...\n");
+	printf("Connecting to %s...\n",device);
   
   	// Attempts to open the first Labjack found
   	// LJM_dtANY - 'DeviceType' option opens any supported LabJack device type
@@ -277,6 +289,14 @@ INT frontend_init()
 
   	// Clear aData. This is not strictly necessary, but can help debugging.
   	//memset(aData, 0, sizeof(double) * aDataSize);
+
+        // ____________________________________________        
+        // ********************************************
+        // Some of this part should also be done on every begin of run
+        int variable1;
+        size = sizeof(variable1);
+        db_get_value(hDB,0,"/Equipment/Labjack02/Settings/Variable1",&variable1,&size,TID_INT,1);
+        printf("Variable1 is set to %i\n",variable1);
 
   	// streamData is cleared
 	memset(streamData, 0, sizeof(double) * streamDataSize);
