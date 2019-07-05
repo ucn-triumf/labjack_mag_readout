@@ -60,6 +60,7 @@ HNDLE hDB;
 /* handle for labjack device*/
 INT handle;
 
+
 /*
 // FOR OLD DAQ BOARD, SINGLE 
 const char *CHANNEL_NAMES[] = {"AIN4", "AIN5", "AIN6"};
@@ -321,7 +322,7 @@ INT frontend_init()
 	// STARTING A STREAM
 
   	// Connect to the labjack
-  	printf("Connecting to labjack01.ucn.triumf.ca...\n");
+	printf("Connecting to %s...\n",device);
   
   	// Attempts to open the first Labjack found
   	// LJM_dtANY - 'DeviceType' option opens any supported LabJack device type
@@ -351,6 +352,8 @@ INT frontend_init()
   	memset(aData, 0, sizeof(double) * aDataSize);
 	*/
 	
+  	//memset(aData, 0, sizeof(double) * aDataSize);
+
   	// streamData is cleared
 	memset(streamData, 0, sizeof(double) * streamDataSize);
 
