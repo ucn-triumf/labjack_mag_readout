@@ -48,7 +48,8 @@ class LabJackT7(object):
     # device settings
     DEVICE_TYPE = 'T7'
     CONNECTION_TYPE = 'ETHERNET'
-    IP = "142.90.151.7"         # IP address of device
+    # ~ IP = "142.90.151.7"         # IP address of device UCN VLAN
+    IP = "142.90.100.26"         # IP address of device VLAN1
     MAX_SAMPLE_RATE = 1e5       # for T7
     
     # stream settings from feLabjack02
