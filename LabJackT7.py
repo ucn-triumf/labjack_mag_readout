@@ -16,6 +16,7 @@
 """
 
 from labjack import ljm
+import matplotlib.pyplot as plt
 from datetime import datetime
 import numpy as np
 import pandas as pd
@@ -129,10 +130,44 @@ class LabJackT7(object):
         """        
         ljm.close(self.lj_handle)
         
+    
+    def draw(self, scan_rate=1500, scan_duration=1):
+        """
+            Draw the result in realtime
+            
+            scan rate in hz
+            scan duration in s
+        """
+        
+        # get initial data
+        _, data = self.read(scan_rate, int(scan_rate*scan_duration), save=False)
+        data = data[0]
+        
+        plt.clf()
+        fig = plt.gcf()
+        lines = [plt.plot(data.index, data[c], label=c)[0] for c in data.columns]
+        plt.legend()
+        plt.xlabel('Time after trigger (s)')
+        plt.show(block=False)
+        plt.pause(scan_duration*0.01)
+
+        try:
+            while True:
+                _, data = self.read(scan_rate, int(scan_rate*scan_duration), save=False)
+                data = data[0]
+                
+                for line, c in zip(lines, data.columns):
+                    line.set_ydata(data[c])
+                fig.canvas.draw()  
+                plt.pause(scan_duration*0.01)
+        
+        finally:
+            self.disconnect()
+        
     def get_data(self):         return self.data
     def get_stream_times(self): return self.stream_times
     
-    def read(self, scan_rate=1500, scan_length=100, nreads=1):
+    def read(self, scan_rate=1500, scan_length=100, nreads=1, save=True):
         """
             Read data from labjack and append to internal data structures: self.data and self.stream_times 
             scan_rate:      Hz, must be less than 100000/(n_addreses*2)
@@ -221,11 +256,13 @@ class LabJackT7(object):
             df_all.append(df)
             times_all.append(date)
         
-        self.data.extend(df_all)
-        self.stream_times.extend(times_all)
-        self.scan_rate = scan_rate
+        if save:
+            self.data.extend(df_all)
+            self.stream_times.extend(times_all)
+            self.scan_rate = scan_rate
+        
         return (times_all, df_all)
-
+        
     def reset(self):
         """
             Erase internal data lists
