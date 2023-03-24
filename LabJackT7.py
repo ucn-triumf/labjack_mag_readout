@@ -23,7 +23,7 @@ import pandas as pd
 from tqdm import tqdm
 from io import StringIO
 
-DEBUG = False   # if True, print debugging statements
+DEBUG = True   # if True, print debugging statements
 
 class LabJackT7(object):
     """
@@ -62,16 +62,16 @@ class LabJackT7(object):
                         'AIN_ALL_NEGATIVE_CH':      ljm.constants.GND,  #  write to this global parameter affects all AIN. Writing 1 will set all AINs to differential. Writing 199 (GND) will set all AINs to single-ended. A read will return 1 if all AINs are set to differential and 199 if all AINs are set to single-ended. If AIN configurations are not consistent 0xFFFF will be returned.
                       }
                       
-    # all possible channels  x        y        z
-    CHANNEL_NAMES = [	    "AIN72", "AIN74", "AIN76",  # CH1
-                            "AIN73", "AIN75", "AIN77",  # CH2
-                            "AIN78", "AIN80", "AIN82",  # CH3
-                            "AIN79", "AIN81", "AIN83",  # CH4
-                            "AIN96", "AIN98", "AIN100", # CH5
-                            "AIN99", "AIN101","AIN103", # CH6
-                            "AIN102","AIN104","AIN106", # CH7
-                            "AIN107","AIN109","AIN110", # CH8
-                            "AIN108","AIN111","AIN113"  # CH9
+    # all possible channels  x        y        z		
+    CHANNEL_NAMES = [	    "AIN73", "AIN75", "AIN77",  # CH1
+                            "AIN72", "AIN74", "AIN76",  # CH2
+                            "AIN79", "AIN81", "AIN83",  # CH3
+                            "AIN78", "AIN80", "AIN82",  # CH4
+                            "AIN99", "AIN101","AIN103", # CH5
+                            "AIN96", "AIN98", "AIN100", # CH6
+                            "AIN107","AIN109","AIN110", # CH7
+                            "AIN102","AIN104","AIN106", # CH8
+                            "AIN108","AIN111","AIN113"  # really CH10 -> where is 9?
                     ]
 
     def __init__(self, channel_list=None): 
