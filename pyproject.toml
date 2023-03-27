@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "LabJackT7"
+version = "0.0.1"
+authors = [
+  { name="Derek Fujimoto", email="dfujimoto@triumf.ca" },
+]
+description = "Python class for reading the LabJackT7 in the black 10-channel fluxgate DAQ box"
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "labjack-ljm",
+    "numpy",
+    "matplotlib",
+    "pyserial",
+    "datetime",
+    "tqdm",
+    "pandas"
+]
