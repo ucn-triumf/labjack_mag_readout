@@ -23,7 +23,7 @@ import pandas as pd
 from tqdm import tqdm
 from io import StringIO
 
-DEBUG = True   # if True, print debugging statements
+DEBUG = False   # if True, print debugging statements
 
 class LabJackT7(object):
     """
@@ -71,7 +71,8 @@ class LabJackT7(object):
                             "AIN96", "AIN98", "AIN100", # CH6
                             "AIN107","AIN109","AIN110", # CH7
                             "AIN102","AIN104","AIN106", # CH8
-                            "AIN108","AIN111","AIN113"  # really CH10 -> where is 9?
+                            "AIN115","AIN117","AIN119", # CH9
+                            "AIN108","AIN111","AIN113"  # CH10
                     ]
 
     def __init__(self, channel_list=None): 
@@ -250,6 +251,7 @@ class LabJackT7(object):
         for date, data in all_data.items():
             df = {ch: data[i::self.n_addresses] for i, ch in enumerate(self.channel_names)}
             df = pd.DataFrame(df, index=index)
+            df = -1*df #correcting for weird negative that all the data seems to get
             df.rename(columns={n:i for n, i in zip(self.channel_names, self.channel_ids)}, inplace=True)
             df.index.name = 'dt (s)'
             

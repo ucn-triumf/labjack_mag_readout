@@ -48,7 +48,7 @@ __Class Definition__
     channel_ids     list of strings, formated as CH1x, human-readable corresponding to channel_names
     channel_names   list of strings, selections from CHANNEL_NAMES to read from
     CONNECTION_TYPE string, type of connection
-    data            list of pd.DataFrames containing all data. Each list element is a separate stream
+    data            list of pd.DataFrames containing all data. Each list element is a separate stream. Data is in volts.
     DEVICE_TYPE     string, type of device to open
     IP              string, IP address of device
     lj_handle       handle address for labjack object
