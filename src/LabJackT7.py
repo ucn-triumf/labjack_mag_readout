@@ -272,7 +272,7 @@ class LabJackT7(object):
         self.data = []
         self.stream_times = []
         
-    def to_csv(self, filename, idx=-1):
+    def to_csv(self, filename, idx=-2):
         """
             Write data to csv
             
@@ -288,7 +288,8 @@ class LabJackT7(object):
             raise RuntimeError('No data saved')
         
         # write file header
-        if idx < 0: msg = 'multiple reads of stream'
+        print('test')
+        if idx < -1: msg = 'multiple reads of stream'
         else:       msg = 'single read of stream'
             
         header = [  f'# labjack output {msg}',
@@ -310,7 +311,7 @@ class LabJackT7(object):
             fid.write('\n'.join(header))
         
         # write a single stream
-        if idx >= 0:
+        if idx >= -1:
             with open(filename, 'a+') as fid:
                 fid.write(f'# START stream {self.stream_times[idx]}\n#\n')
             self.data[idx].to_csv(filename, mode='a+')

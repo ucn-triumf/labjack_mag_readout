@@ -101,8 +101,8 @@ __Methods__
 `reset(self)`
 :   Erase internal data lists
 
-`to_csv(self, filename, idx=-1)`
+`to_csv(self, filename, idx=-2)`
 :   Write data to csv
     
     filename: name of file to write to
-    if idx < 0, then write all streams to file, else write stream of that index to file
+    if idx < -1, then write all streams to file, else write stream of that index to file
